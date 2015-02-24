@@ -1,0 +1,57 @@
+#!/usr/bin/ruby
+
+require "commander/import"
+
+require "bt_opscenter"
+
+Signal.trap("PIPE", "EXIT")
+
+program :version, BtOpscenter::VERSION
+program :description, "CLI for interacting with OpsCenter API (currently only supports subset of operations)"
+
+$host = "127.0.0.1"
+$port = "8888"
+global_option("--host 127.0.0.1", "OpsCenter host") { |host| $host = host }
+global_option("--port 8888", "OpsCenter port")      { |port| $port = port }
+
+command :backups do |c|
+  c.description = "Lists backups for the Cassandra cluster id."
+  c.syntax = "backups <cluster-id>"
+
+  c.action do |args, _|
+    client = BtOpscenter::Client.new($host, $port)
+
+    client.get_backups(args[0]).each do |backup|
+      puts(backup.inspect)
+    end
+  end
+end
+
+command :restore do |c|
+  c.description = "Restore backup by backup-id to Cassandra cluster."
+  c.syntax = "restore <cluster-id> <backup-tag>"
+  c.option "--ksname STRING", String, "Keyspace to restore"
+
+  c.action do |args, options|
+    client = BtOpscenter::Client.new($host, $port)
+
+    request_id = client.restore_backup(args[0], args[1], ksname: options.ksname)
+
+    puts "Backup restore in progress."
+    puts "Asynchronous Request ID: #{request_id}"
+
+    async_result = loop do
+      async_result = client.get_request_status(request_id)
+
+      case
+        when async_result.running? then next
+        when async_result.success?, async_result.error? then break async_result
+      end
+    end
+
+    puts "Status: #{async_result.state}"
+    puts "Time taken: #{async_result.time_taken} secs."
+  end
+end
+
+# vim: ft=ruby
